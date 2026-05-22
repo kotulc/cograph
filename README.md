@@ -1,2 +1,2 @@
-# vscode-cograph
-A nested graph viewer extension for Visual Studio Code
+# cograph
+A nested graph viewer with an extension for Visual Studio Code
