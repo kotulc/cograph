@@ -23,7 +23,7 @@ import {
   BreadcrumbItem,
   Metric,
   Filters,
-  maxDepthBelow,
+  maxUsefulDepth,
   projectRoot,
 } from '@cograph/renderer';
 import { FolderPicker } from './FolderPicker.js';
@@ -195,7 +195,7 @@ export function App() {
 
       // Initialise navigation at the project root, depth 0
       const root = projectRoot(scanned);
-      const md = maxDepthBelow(scanned, root);
+      const md = maxUsefulDepth(scanned, root);
       setModel(scanned);
       setRootId(root);
       setDepth(0);
@@ -214,7 +214,7 @@ export function App() {
     if (!model) return;
     const node = model.getNode(id);
     if (!node || node.kind !== 'folder') return;
-    const md = maxDepthBelow(model, id);
+    const md = maxUsefulDepth(model, id);
     setRootId(id);
     setDepth(0);
     setMaxDepth(md);
@@ -224,7 +224,7 @@ export function App() {
   // Breadcrumb navigation — click an ancestor folder
   const handleBreadcrumbClick = useCallback((id: string) => {
     if (!model) return;
-    const md = maxDepthBelow(model, id);
+    const md = maxUsefulDepth(model, id);
     setRootId(id);
     setDepth(0);
     setMaxDepth(md);

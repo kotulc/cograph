@@ -37,11 +37,20 @@ export interface CyElement { data: CyData }
 // ── Language → color ──────────────────────────────────────────────────────────
 
 const LANG_COLORS: Record<string, string> = {
+  // Text / code
   markdown: '#4caf50', typescript: '#2196f3', tsx: '#00bcd4',
   javascript: '#ff9800', jsx: '#ff5722', python: '#9c27b0',
   json: '#607d8b', yaml: '#795548', css: '#e91e63',
   scss: '#f06292', html: '#ff6f00', text: '#9e9e9e',
   shell: '#424242', rust: '#bf360c', go: '#00acc1',
+  svg: '#4caf50', xml: '#607d8b', sql: '#1976d2',
+  // Binary / asset — visually distinct but muted
+  image:   '#f06292',  // pink
+  pdf:     '#ef5350',  // red
+  video:   '#7e57c2',  // purple
+  audio:   '#26a69a',  // teal
+  font:    '#a1887f',  // brown
+  archive: '#78909c',  // blue-grey
 };
 
 export function langColor(language: string): string {
@@ -133,6 +142,26 @@ export function projectRoot(model: GraphModel): string {
   return root?.id ?? 'folder::';
 }
 
+/**
+ * Returns the highest depth at which the frontier view changes from the previous depth.
+ * Depths beyond this produce the same compound layout — the slider max should cap here.
+ */
+export function maxUsefulDepth(model: GraphModel, rootId: string): number {
+  const setOf = (d: number): Set<string> => new Set(
+    frontierFolders(model, rootId, d)
+      .filter((f) => filesInSubtree(model, f.id).length > 0)
+      .map((f) => f.id),
+  );
+  let prev = setOf(0);
+  for (let d = 1; d <= 20; d++) {
+    const curr = setOf(d);
+    const same = curr.size === prev.size && [...prev].every((id) => curr.has(id));
+    if (same) return d - 1;
+    prev = curr;
+  }
+  return 20;
+}
+
 
 // ── Auto HAC level ────────────────────────────────────────────────────────────
 
@@ -187,8 +216,11 @@ export function graphElements(
 ): CyElement[] {
   const elements: CyElement[] = [];
 
-  // Frontier folder compounds at this depth
-  const frontier = frontierFolders(model, rootId, depth);
+  // Frontier folder compounds at this depth.
+  // Folders with no file descendants (in any subtree) are omitted — they are
+  // genuinely empty structural nodes that add no visual value.
+  const frontier = frontierFolders(model, rootId, depth)
+    .filter((f) => filesInSubtree(model, f.id).length > 0);
 
   // Map each frontier folder to the file IDs in its full subtree
   const folderToFileIds = new Map<string, string[]>();
@@ -214,7 +246,9 @@ export function graphElements(
 
   /**
    * Adds semantic sub-cluster compounds + file leaves within a parent compound.
-   * If all files map to the same cluster, files go directly into the parent (no sub-compound).
+   * When files span multiple clusters, a sub-cluster compound is created per cluster.
+   * When all files share one cluster, files go directly into the parent — but the
+   * folder node itself is still registered in globalToSubs so inter-folder edges form.
    */
   const addContents = (parentId: string, fileIds: string[]) => {
     if (fileIds.length === 0) return;
@@ -230,6 +264,9 @@ export function graphElements(
     const useSubClusters = clusterToFiles.size > 1;
 
     for (const [cid, cfids] of clusterToFiles) {
+      // edgeNode = the Cytoscape node that becomes an endpoint for similar edges.
+      // When there are sub-clusters, use the sub-cluster compound; otherwise the folder itself.
+      let edgeNode = parentId;
       let fileParent = parentId;
 
       if (useSubClusters) {
@@ -237,12 +274,14 @@ export function graphElements(
         const label = cid !== '__none' ? (model.getNode(cid)?.label ?? '') : '';
         elements.push({ data: { id: subId, label, kind: 'subcluster', parent: parentId } });
         fileParent = subId;
+        edgeNode = subId;
+      }
 
-        if (cid !== '__none') {
-          const arr = globalToSubs.get(cid) ?? [];
-          arr.push({ subId, folderId: parentId });
-          globalToSubs.set(cid, arr);
-        }
+      // Always register for inter-folder edge generation (even single-cluster folders).
+      if (cid !== '__none') {
+        const arr = globalToSubs.get(cid) ?? [];
+        arr.push({ subId: edgeNode, folderId: parentId });
+        globalToSubs.set(cid, arr);
       }
 
       for (const fid of cfids) {
@@ -259,7 +298,9 @@ export function graphElements(
 
   // Frontier folder structural compounds
   for (const folder of frontier) {
-    elements.push({ data: { id: folder.id, label: folder.label, kind: 'folder' } });
+    // Use relative path (folder::posts/2020/images → "posts/2020/images") to disambiguate
+    const relPath = folder.id.replace(/^folder::/, '') || folder.label;
+    elements.push({ data: { id: folder.id, label: relPath, kind: 'folder' } });
     addContents(folder.id, folderToFileIds.get(folder.id) ?? []);
   }
 

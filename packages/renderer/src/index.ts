@@ -1,7 +1,7 @@
 /** @cograph/renderer public API */
 
 export { CographCanvas } from './CographCanvas.js';
-export { useGraphModel, graphElements, maxDepthBelow, projectRoot, langColor } from './useGraphModel.js';
+export { useGraphModel, graphElements, maxDepthBelow, maxUsefulDepth, projectRoot, langColor } from './useGraphModel.js';
 export { DepthNav } from './LayerNav.js';
 export { ColorMap } from './ColorMap.js';
 export { FilterPanel } from './FilterPanel.js';

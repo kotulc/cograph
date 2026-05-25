@@ -28,30 +28,40 @@ describe('walkDir (sample project)', () => {
     expect(model.nodesByKind('file').length).toBeGreaterThan(0);
   });
 
-  it('emits at least one chunk per text file', async () => {
+  it('emits at least one chunk per text file (binary files have no chunks)', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
-    const files = model.nodesByKind('file');
+    const BINARY_LANGS = new Set(['image', 'pdf', 'video', 'audio', 'font', 'archive']);
+    const textFiles = model.nodesByKind('file')
+      .filter((f) => !BINARY_LANGS.has((f.meta as { language: string }).language));
     const chunks = model.nodesByKind('chunk');
-    expect(chunks.length).toBeGreaterThanOrEqual(files.length);
+    expect(chunks.length).toBeGreaterThanOrEqual(textFiles.length);
   });
 
-  it('does not emit nodes for image/binary files', async () => {
+  it('emits file nodes for image/binary files (diamond nodes, no chunks)', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
-    const allLabels = model.allNodes().map((n) => n.label);
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-    for (const label of allLabels) {
-      const lower = label.toLowerCase();
-      for (const ext of imageExtensions) {
-        expect(lower.endsWith(ext), `Unexpected image node: ${label}`).toBe(false);
-      }
+    // At least one image file exists in the sample project
+    const imageFiles = model.nodesByKind('file').filter((f) => {
+      const label = f.label.toLowerCase();
+      return imageExtensions.some((ext) => label.endsWith(ext));
+    });
+    // Image files should be present as nodes
+    expect(imageFiles.length).toBeGreaterThan(0);
+    // Image files should have no chunk children (binary — not read as text)
+    for (const f of imageFiles) {
+      const chunks = model.children(f.id).filter((c) => c.kind === 'chunk');
+      expect(chunks.length, `Image file ${f.label} should have no chunks`).toBe(0);
     }
   });
 
-  it('every file node has at least one chunk child via contains edge', async () => {
+  it('every TEXT file node has at least one chunk child via contains edge', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
-    for (const file of model.nodesByKind('file')) {
+    const BINARY_LANGS = new Set(['image', 'pdf', 'video', 'audio', 'font', 'archive']);
+    const textFiles = model.nodesByKind('file')
+      .filter((f) => !BINARY_LANGS.has((f.meta as { language: string }).language));
+    for (const file of textFiles) {
       const kids = model.children(file.id).filter((c) => c.kind === 'chunk');
-      expect(kids.length, `File ${file.label} has no chunk children`).toBeGreaterThan(0);
+      expect(kids.length, `Text file ${file.label} has no chunk children`).toBeGreaterThan(0);
     }
   });
 

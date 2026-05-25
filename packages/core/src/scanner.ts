@@ -8,13 +8,32 @@ import { defaultChunker } from './chunker.js';
 
 // ── Language detection ────────────────────────────────────────────────────────
 
-const LANG_MAP: Record<string, string> = {
+/**
+ * Text-based languages: files are read, chunked, and embedded.
+ * Any extension not listed here is treated as binary (no text read).
+ */
+const TEXT_LANG_MAP: Record<string, string> = {
   '.ts': 'typescript', '.tsx': 'tsx', '.js': 'javascript', '.jsx': 'jsx',
   '.py': 'python',     '.rb':  'ruby',  '.go':  'go',   '.rs':  'rust',
   '.md': 'markdown',   '.txt': 'text',  '.sh':  'shell', '.yaml': 'yaml',
   '.yml': 'yaml',      '.toml': 'toml', '.json': 'json', '.html': 'html',
   '.css': 'css',       '.scss': 'scss', '.java': 'java', '.cpp':  'cpp',
   '.c':   'c',         '.h':   'c',     '.kt':  'kotlin', '.swift': 'swift',
+  '.sql': 'sql',       '.xml': 'xml',   '.svg': 'svg',
+};
+
+/**
+ * Binary / asset languages: files receive a graph node but are NOT read or chunked.
+ * The filename and language tag serve as their semantic identity.
+ */
+const BINARY_LANG_MAP: Record<string, string> = {
+  '.jpg': 'image', '.jpeg': 'image', '.png': 'image', '.gif': 'image',
+  '.webp': 'image', '.ico': 'image',  '.bmp': 'image', '.tiff': 'image',
+  '.pdf': 'pdf',
+  '.mp4': 'video', '.mov': 'video',   '.avi': 'video', '.mkv': 'video',
+  '.mp3': 'audio', '.wav': 'audio',   '.ogg': 'audio', '.flac': 'audio',
+  '.woff': 'font', '.woff2': 'font',  '.ttf': 'font',  '.otf': 'font',
+  '.zip': 'archive', '.tar': 'archive', '.gz': 'archive', '.7z': 'archive',
 };
 
 const DEFAULT_IGNORE = ['node_modules', '.git', 'dist', '.turbo', '.cache', '*.vsix'];
@@ -40,7 +59,7 @@ export interface ScanResult {
 
 /**
  * Recursively walks `root`, emitting folder/file/chunk nodes and contains edges.
- * Binary files and files matching ignore patterns are skipped.
+ * Text files are chunked for embedding; binary/asset files receive a file node only.
  * Returns the populated GraphModel and a path index for I/O operations.
  */
 export async function walkDir(
@@ -99,16 +118,14 @@ export async function walkDir(
 
       } else {
         const ext = extname(entry.name);
-        const language = LANG_MAP[ext] ?? 'unknown';
-        if (language === 'unknown') continue; // skip unrecognised / binary types
+        const textLang = TEXT_LANG_MAP[ext];
+        const binaryLang = BINARY_LANG_MAP[ext];
+        const language = textLang ?? binaryLang;
 
-        let text: string;
-        try { text = await reader.readText(entry.path); } catch { continue; }
+        // Skip files with completely unknown extensions
+        if (!language) continue;
 
-        // Skip binary files (null-byte heuristic on first 8 KB)
-        if (hasBinaryContent(text.slice(0, 8192))) continue;
-        if (text.length > maxFileSizeBytes) continue;
-
+        // Every recognised file gets a file node
         const fileId = `file::${rel}`;
         const fileNode: GraphNode = {
           id: fileId, kind: 'file', label: entry.name,
@@ -117,8 +134,17 @@ export async function walkDir(
         model.addNode(fileNode);
         pathIndex.byPath.set(entry.path, fileId);
         pathIndex.byId.set(fileId, entry.path);
-
         if (parentId) model.addEdge(contains(parentId, fileId));
+
+        // Binary/asset files stop here — no text read, no chunks, no embedding
+        if (!textLang) continue;
+
+        let text: string;
+        try { text = await reader.readText(entry.path); } catch { continue; }
+
+        // Heuristic binary check for files whose extension we thought was text
+        if (hasBinaryContent(text.slice(0, 8192))) continue;
+        if (text.length > maxFileSizeBytes) continue;
 
         const segments = chunker.chunk(text, chunkWindowSize, chunkOverlap);
         segments.forEach((content, position) => {
@@ -128,7 +154,6 @@ export async function walkDir(
             vector: undefined,
             meta: { position } as ChunkMeta,
           };
-          // Store the raw text temporarily in label for embedding; replaced post-embed
           (chunkNode as GraphNode & { content: string }).content = content;
           model.addNode(chunkNode);
           model.addEdge(contains(fileId, chunkId));

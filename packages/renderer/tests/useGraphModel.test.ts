@@ -108,19 +108,24 @@ describe('graphElements — structural', () => {
 
 describe('graphElements — depth frontier', () => {
   it('at depth 1, leaf folders at depth 0 are still included', () => {
-    // root → leafA (no children), root → posts → 2020
+    // root → about (leaf, has file) → root → posts → 2020 (has file)
+    // Empty frontier folders are filtered out, so all folders here must have files.
     const model = new GraphModel();
     model.addNode({ id: 'folder::', kind: 'folder', label: 'root', meta: { depth: 0 } });
     model.addNode({ id: 'folder::about', kind: 'folder', label: 'about', meta: { depth: 1 } });
     model.addNode({ id: 'folder::posts', kind: 'folder', label: 'posts', meta: { depth: 1 } });
     model.addNode({ id: 'folder::posts/2020', kind: 'folder', label: '2020', meta: { depth: 2 } });
+    model.addNode({ id: 'file::about/index.md', kind: 'file', label: 'index.md', meta: { language: 'markdown' } });
+    model.addNode({ id: 'file::posts/2020/post.md', kind: 'file', label: 'post.md', meta: { language: 'markdown' } });
     model.addEdge({ id: 'e1', source: 'folder::', target: 'folder::about', kind: 'contains', weight: 1 });
     model.addEdge({ id: 'e2', source: 'folder::', target: 'folder::posts', kind: 'contains', weight: 1 });
     model.addEdge({ id: 'e3', source: 'folder::posts', target: 'folder::posts/2020', kind: 'contains', weight: 1 });
+    model.addEdge({ id: 'e4', source: 'folder::about', target: 'file::about/index.md', kind: 'contains', weight: 1 });
+    model.addEdge({ id: 'e5', source: 'folder::posts/2020', target: 'file::posts/2020/post.md', kind: 'contains', weight: 1 });
 
     const elems = graphElements(model, 'folder::', 1);
     const folders = elems.filter((e) => e.data.kind === 'folder').map((e) => e.data.id);
-    // about stays (leaf), posts/2020 appears (frontier), posts is collapsed
+    // about stays (leaf with file), posts/2020 appears (frontier), posts is collapsed
     expect(folders).toContain('folder::about');
     expect(folders).toContain('folder::posts/2020');
     expect(folders).not.toContain('folder::posts');
