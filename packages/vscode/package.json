@@ -1,0 +1,10 @@
+{
+  "name": "@cograph/vscode",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "echo \"VS Code extension — Phase 6\" && exit 0",
+    "test": "echo \"No vscode tests yet\" && exit 0",
+    "lint": "echo \"ok\""
+  }
+}

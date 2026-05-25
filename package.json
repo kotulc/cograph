@@ -1,0 +1,17 @@
+{
+  "name": "cograph",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "turbo build",
+    "test": "turbo test",
+    "lint": "turbo lint",
+    "dev": "turbo dev --filter @cograph/app"
+  },
+  "devDependencies": {
+    "turbo": "^2",
+    "typescript": "^5.5",
+    "prettier": "^3"
+  },
+  "packageManager": "pnpm@11.3.0"
+}

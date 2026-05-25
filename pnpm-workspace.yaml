@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+allowedDeprecatedVersions:
+  '@types/cytoscape': '*'
+allowBuilds:
+  esbuild: true
+  onnxruntime-node: true
+  protobufjs: true
+  sharp: true

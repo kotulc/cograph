@@ -1,0 +1,24 @@
+{
+  "name": "@cograph/app",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "lint": "tsc --noEmit",
+    "test": "echo \"No app tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "@cograph/core": "workspace:*",
+    "@cograph/renderer": "workspace:*",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@vitejs/plugin-react": "^4",
+    "vite": "^5",
+    "typescript": "^5.5"
+  }
+}
