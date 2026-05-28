@@ -8,17 +8,15 @@ import { IConfigStore, CoGraphConfig } from './types.js';
 
 const VectorCacheSchema = z.object({
   updatedAt: z.string(),
-  chunks: z.record(z.array(z.number())),
+  elements: z.record(z.array(z.number())),
   representatives: z.record(z.array(z.number())),
 });
 
 export const ConfigSchema = z.object({
   version: z.number().int().positive(),
-  activeLayout: z.enum(['structural', 'semantic']),
   metric: z.string(),
-  maxDepth: z.number().int().nonnegative(),
+  maxElements: z.number().int().positive(),
   labelOverrides: z.record(z.string()),
-  membershipOverrides: z.record(z.string()),
   dismissedSuggestions: z.array(z.string()),
   acceptedEdges: z.array(z.string()),
   vectorCache: VectorCacheSchema,
@@ -28,15 +26,13 @@ export const ConfigSchema = z.object({
 // ── Defaults ──────────────────────────────────────────────────────────────────
 
 export const CONFIG_DEFAULTS: CoGraphConfig = {
-  version: 1,
-  activeLayout: 'structural',
+  version: 2,
   metric: 'language',
-  maxDepth: 4,
+  maxElements: 50,
   labelOverrides: {},
-  membershipOverrides: {},
   dismissedSuggestions: [],
   acceptedEdges: [],
-  vectorCache: { updatedAt: '', chunks: {}, representatives: {} },
+  vectorCache: { updatedAt: '', elements: {}, representatives: {} },
 };
 
 export function mergeDefaults(partial: Partial<CoGraphConfig>): CoGraphConfig {

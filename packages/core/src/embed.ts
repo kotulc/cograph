@@ -45,7 +45,6 @@ export class TransformersEmbedder implements EmbeddingProvider {
       const batch = texts.slice(i, i + this.batchSize);
       const output = await pipe(batch, { pooling: 'mean', normalize: true });
 
-      // v3 returns a Tensor; dims = [batchSize, hiddenDim]
       const [batchSize, dim] = output.dims;
       for (let j = 0; j < (batchSize ?? batch.length); j++) {
         results.push(Array.from(output.data.slice(j * (dim ?? 0), (j + 1) * (dim ?? 0))));
@@ -60,41 +59,41 @@ export class TransformersEmbedder implements EmbeddingProvider {
 // ── Graph embedding pass ──────────────────────────────────────────────────────
 
 /**
- * Embeds all chunk nodes in `model` using `provider`.
- * Skips chunks whose id is already present in `cache.chunks`.
- * Mutates chunk node vectors and updates the cache in place.
+ * Embeds all element nodes in `model` using `provider`.
+ * Skips elements whose id is already present in `cache.elements`.
+ * Mutates element node vectors and updates the cache in place.
  */
-export async function embedChunks(
+export async function embedElements(
   model: GraphModel,
   provider: EmbeddingProvider,
   cache: VectorCache,
   onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
-  const chunks = model.nodesByKind('chunk');
-  const toEmbed = chunks.filter((c) => !cache.chunks[c.id]);
+  const elements = model.nodesByKind('element');
+  const toEmbed = elements.filter((e) => !cache.elements[e.id]);
   const total = toEmbed.length;
   let done = 0;
 
   const BATCH = 64;
   for (let i = 0; i < toEmbed.length; i += BATCH) {
     const batch = toEmbed.slice(i, i + BATCH);
-    const texts = batch.map((c) => (c as unknown as { content: string }).content ?? c.label);
+    const texts = batch.map((e) => (e as unknown as { content: string }).content ?? e.label);
     const vectors = await provider.embed(texts);
 
-    batch.forEach((chunk, j) => {
+    batch.forEach((element, j) => {
       const vec = vectors[j] ?? [];
-      model.updateNode(chunk.id, { vector: vec });
-      cache.chunks[chunk.id] = vec;
+      model.updateNode(element.id, { vector: vec });
+      cache.elements[element.id] = vec;
     });
 
     done += batch.length;
     onProgress?.(done, total);
   }
 
-  // Restore cached vectors for already-embedded chunks
-  for (const chunk of chunks) {
-    if (cache.chunks[chunk.id] && !chunk.vector) {
-      model.updateNode(chunk.id, { vector: cache.chunks[chunk.id] });
+  // Restore cached vectors for already-embedded elements
+  for (const element of elements) {
+    if (cache.elements[element.id] && !element.vector) {
+      model.updateNode(element.id, { vector: cache.elements[element.id] });
     }
   }
 }

@@ -1,7 +1,7 @@
-/** File system walker — emits folder/file/chunk nodes and structural contains edges. */
+/** File system walker — emits folder/file/element nodes and structural contains edges. */
 
 import ignore from 'ignore';
-import { IFileReader, IChunker, DirEntry, GraphNode, GraphEdge, FolderMeta, FileMeta, ChunkMeta } from './types.js';
+import { IFileReader, IChunker, DirEntry, GraphNode, GraphEdge, FolderMeta, FileMeta, ElementMeta } from './types.js';
 import { GraphModel } from './graph.js';
 import { defaultChunker } from './chunker.js';
 
@@ -9,7 +9,7 @@ import { defaultChunker } from './chunker.js';
 // ── Language detection ────────────────────────────────────────────────────────
 
 /**
- * Text-based languages: files are read, chunked, and embedded.
+ * Text-based languages: files are read, segmented, and embedded.
  * Any extension not listed here is treated as binary (no text read).
  */
 const TEXT_LANG_MAP: Record<string, string> = {
@@ -23,7 +23,7 @@ const TEXT_LANG_MAP: Record<string, string> = {
 };
 
 /**
- * Binary / asset languages: files receive a graph node but are NOT read or chunked.
+ * Binary / asset languages: files receive a file node but are NOT read or segmented.
  * The filename and language tag serve as their semantic identity.
  */
 const BINARY_LANG_MAP: Record<string, string> = {
@@ -58,8 +58,8 @@ export interface ScanResult {
 
 
 /**
- * Recursively walks `root`, emitting folder/file/chunk nodes and contains edges.
- * Text files are chunked for embedding; binary/asset files receive a file node only.
+ * Recursively walks `root`, emitting folder/file/element nodes and contains edges.
+ * Text files are segmented for embedding; binary/asset files receive a file node only.
  * Returns the populated GraphModel and a path index for I/O operations.
  */
 export async function walkDir(
@@ -127,16 +127,17 @@ export async function walkDir(
 
         // Every recognised file gets a file node
         const fileId = `file::${rel}`;
+        const expandable = !!textLang;
         const fileNode: GraphNode = {
           id: fileId, kind: 'file', label: entry.name,
-          meta: { language } as FileMeta,
+          meta: { language, expandable } as FileMeta,
         };
         model.addNode(fileNode);
         pathIndex.byPath.set(entry.path, fileId);
         pathIndex.byId.set(fileId, entry.path);
         if (parentId) model.addEdge(contains(parentId, fileId));
 
-        // Binary/asset files stop here — no text read, no chunks, no embedding
+        // Binary/asset files stop here — no text read, no elements, no embedding
         if (!textLang) continue;
 
         let text: string;
@@ -148,15 +149,15 @@ export async function walkDir(
 
         const segments = chunker.chunk(text, chunkWindowSize, chunkOverlap);
         segments.forEach((content, position) => {
-          const chunkId = `chunk::${rel}::${position}`;
-          const chunkNode: GraphNode = {
-            id: chunkId, kind: 'chunk', label: `${entry.name}[${position}]`,
+          const elementId = `element::${rel}::${position}`;
+          const elementNode: GraphNode = {
+            id: elementId, kind: 'element', label: `${entry.name}[${position}]`,
             vector: undefined,
-            meta: { position } as ChunkMeta,
+            meta: { position } as ElementMeta,
           };
-          (chunkNode as GraphNode & { content: string }).content = content;
-          model.addNode(chunkNode);
-          model.addEdge(contains(fileId, chunkId));
+          (elementNode as GraphNode & { content: string }).content = content;
+          model.addNode(elementNode);
+          model.addEdge(contains(fileId, elementId));
         });
       }
     }

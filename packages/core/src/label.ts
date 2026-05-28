@@ -1,7 +1,6 @@
-/** TF-IDF cluster label generator and label suggestion utilities. */
+/** TF-IDF block label generator and label suggestion utilities. */
 
 import { GraphModel } from './graph.js';
-import { ClusterMeta } from './types.js';
 
 
 const STOP_WORDS = new Set([
@@ -25,10 +24,10 @@ function tokenize(text: string): string[] {
 
 
 /**
- * Collect all chunk content reachable from a set of node ids (files or clusters).
- * Traverses `merges` and `contains` edges recursively to reach chunk nodes.
+ * Collect all element content reachable from a set of node ids (files or blocks).
+ * Traverses `merges` and `contains` edges recursively to reach element nodes.
  */
-function collectChunkContent(ids: string[], model: GraphModel, visited = new Set<string>()): string[] {
+function collectElementContent(ids: string[], model: GraphModel, visited = new Set<string>()): string[] {
   const texts: string[] = [];
   for (const id of ids) {
     if (visited.has(id)) continue;
@@ -36,16 +35,16 @@ function collectChunkContent(ids: string[], model: GraphModel, visited = new Set
     const node = model.getNode(id);
     if (!node) continue;
 
-    if (node.kind === 'chunk') {
+    if (node.kind === 'element') {
       const content = (node as unknown as { content: string }).content;
       if (content) texts.push(content);
     } else {
-      // Descend into children (contains) and cluster members (merges)
+      // Descend into children (contains) and block members (merges)
       const children = [
         ...model.children(id),
         ...model.neighbors(id, 'merges'),
       ];
-      texts.push(...collectChunkContent(children.map((c) => c.id), model, visited));
+      texts.push(...collectElementContent(children.map((c) => c.id), model, visited));
     }
   }
   return texts;
@@ -53,12 +52,12 @@ function collectChunkContent(ids: string[], model: GraphModel, visited = new Set
 
 
 /**
- * Generate a TF-IDF label for a cluster from its member content.
+ * Generate a TF-IDF label for a block from its member element content.
  * Returns the top `topN` terms joined by spaces.
  */
-export function tfidfLabel(clusterId: string, model: GraphModel, topN = 5): string {
-  const texts = collectChunkContent([clusterId], model);
-  if (texts.length === 0) return 'cluster';
+export function tfidfLabel(nodeId: string, model: GraphModel, topN = 5): string {
+  const texts = collectElementContent([nodeId], model);
+  if (texts.length === 0) return 'block';
 
   const termFreq = new Map<string, number>();
   const docFreq = new Map<string, number>();
@@ -85,31 +84,30 @@ export function tfidfLabel(clusterId: string, model: GraphModel, topN = 5): stri
 
 
 /**
- * Generate `n` alternative label variants for a cluster by varying topN and stop-word exclusion.
+ * Generate `n` alternative label variants for a block by varying topN.
  */
-export function suggestLabels(clusterId: string, model: GraphModel, n = 3): string[] {
+export function suggestLabels(nodeId: string, model: GraphModel, n = 3): string[] {
   const variants: string[] = [];
   for (let i = 0; i < n; i++) {
-    variants.push(tfidfLabel(clusterId, model, 3 + i * 2));
+    variants.push(tfidfLabel(nodeId, model, 3 + i * 2));
   }
   return [...new Set(variants)].slice(0, n);
 }
 
 
 /**
- * Apply TF-IDF labels to all cluster nodes in the model.
+ * Apply TF-IDF labels to all block nodes in the model.
  * Respects existing label overrides from `overrides`.
  */
-export function labelClusters(
+export function labelBlocks(
   model: GraphModel,
   overrides: Record<string, string> = {},
 ): void {
-  for (const node of model.nodesByKind('cluster')) {
+  for (const node of model.nodesByKind('block')) {
     if (overrides[node.id]) {
       model.updateNode(node.id, { label: overrides[node.id] });
     } else {
-      const scope = (node.meta as ClusterMeta).scope;
-      const label = tfidfLabel(node.id, model, scope === 'global' ? 5 : 3);
+      const label = tfidfLabel(node.id, model, 3);
       model.updateNode(node.id, { label: label || node.label });
     }
   }

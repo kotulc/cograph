@@ -9,6 +9,7 @@ import { resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { walkDir } from '../src/scanner.js';
 import { NodeFileReader } from './helpers/NodeFileReader.js';
+import { FileMeta } from '../src/types.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -28,47 +29,44 @@ describe('walkDir (sample project)', () => {
     expect(model.nodesByKind('file').length).toBeGreaterThan(0);
   });
 
-  it('emits at least one chunk per text file (binary files have no chunks)', async () => {
+  it('emits at least one element per text file (binary files have no elements)', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
     const BINARY_LANGS = new Set(['image', 'pdf', 'video', 'audio', 'font', 'archive']);
     const textFiles = model.nodesByKind('file')
-      .filter((f) => !BINARY_LANGS.has((f.meta as { language: string }).language));
-    const chunks = model.nodesByKind('chunk');
-    expect(chunks.length).toBeGreaterThanOrEqual(textFiles.length);
+      .filter((f) => !BINARY_LANGS.has((f.meta as FileMeta).language));
+    const elements = model.nodesByKind('element');
+    expect(elements.length).toBeGreaterThanOrEqual(textFiles.length);
   });
 
-  it('emits file nodes for image/binary files (diamond nodes, no chunks)', async () => {
+  it('binary file nodes carry expandable:false and have no element children', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
     const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
-    // At least one image file exists in the sample project
     const imageFiles = model.nodesByKind('file').filter((f) => {
       const label = f.label.toLowerCase();
       return imageExtensions.some((ext) => label.endsWith(ext));
     });
-    // Image files should be present as nodes
     expect(imageFiles.length).toBeGreaterThan(0);
-    // Image files should have no chunk children (binary — not read as text)
     for (const f of imageFiles) {
-      const chunks = model.children(f.id).filter((c) => c.kind === 'chunk');
-      expect(chunks.length, `Image file ${f.label} should have no chunks`).toBe(0);
+      expect((f.meta as FileMeta).expandable).toBe(false);
+      const children = model.children(f.id).filter((c) => c.kind === 'element');
+      expect(children.length, `Binary file ${f.label} should have no element children`).toBe(0);
     }
   });
 
-  it('every TEXT file node has at least one chunk child via contains edge', async () => {
+  it('every text file node has at least one element child via contains edge', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
     const BINARY_LANGS = new Set(['image', 'pdf', 'video', 'audio', 'font', 'archive']);
     const textFiles = model.nodesByKind('file')
-      .filter((f) => !BINARY_LANGS.has((f.meta as { language: string }).language));
+      .filter((f) => !BINARY_LANGS.has((f.meta as FileMeta).language));
     for (const file of textFiles) {
-      const kids = model.children(file.id).filter((c) => c.kind === 'chunk');
-      expect(kids.length, `Text file ${file.label} has no chunk children`).toBeGreaterThan(0);
+      const kids = model.children(file.id).filter((c) => c.kind === 'element');
+      expect(kids.length, `Text file ${file.label} has no element children`).toBeGreaterThan(0);
     }
   });
 
   it('every non-root folder node has a parent via contains edge', async () => {
     const { model } = await walkDir(SAMPLE_ROOT, reader);
     const folders = model.nodesByKind('folder');
-    // All folders except the root (depth 0) should have a parent
     const nonRoot = folders.filter((f) => (f.meta as { depth: number }).depth > 0);
     for (const folder of nonRoot) {
       expect(model.parent(folder.id), `Folder ${folder.label} has no parent`).toBeDefined();

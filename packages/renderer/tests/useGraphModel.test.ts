@@ -1,37 +1,68 @@
 import { describe, it, expect } from 'vitest';
 import { GraphModel } from '@cograph/core';
-import { graphElements, maxDepthBelow, projectRoot } from './helpers/elementBuilders.js';
+import { graphElements, displayChildren, projectRoot } from '../src/useGraphModel.js';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Builds a minimal model: root → folderA → fileA, root → folderB → fileB */
-function twoFolderModel(): { model: GraphModel; rootId: string } {
-  const model = new GraphModel();
-  model.addNode({ id: 'folder::', kind: 'folder', label: 'root', meta: { depth: 0 } });
-  model.addNode({ id: 'folder::a', kind: 'folder', label: 'a', meta: { depth: 1 } });
-  model.addNode({ id: 'folder::b', kind: 'folder', label: 'b', meta: { depth: 1 } });
-  model.addNode({ id: 'file::a/f1', kind: 'file', label: 'f1.md', meta: { language: 'markdown' } });
-  model.addNode({ id: 'file::b/f2', kind: 'file', label: 'f2.md', meta: { language: 'markdown' } });
-  model.addEdge({ id: 'e1', source: 'folder::', target: 'folder::a', kind: 'contains', weight: 1 });
-  model.addEdge({ id: 'e2', source: 'folder::', target: 'folder::b', kind: 'contains', weight: 1 });
-  model.addEdge({ id: 'e3', source: 'folder::a', target: 'file::a/f1', kind: 'contains', weight: 1 });
-  model.addEdge({ id: 'e4', source: 'folder::b', target: 'file::b/f2', kind: 'contains', weight: 1 });
-  return { model, rootId: 'folder::' };
+// ── Model builders ────────────────────────────────────────────────────────────
+
+/** root → folderA (fileA1, fileA2), root → folderB (fileB1) */
+function twoFolderModel() {
+  const m = new GraphModel();
+  const add = (id: string, kind: string, label: string, meta: object) =>
+    m.addNode({ id, kind: kind as never, label, meta: meta as never });
+  const link = (src: string, tgt: string, i: number) =>
+    m.addEdge({ id: `e${i}`, source: src, target: tgt, kind: 'contains', weight: 1 });
+
+  add('folder::', 'folder', 'root', { depth: 0 });
+  add('folder::a', 'folder', 'a', { depth: 1 });
+  add('folder::b', 'folder', 'b', { depth: 1 });
+  add('file::a/f1', 'file', 'f1.md', { language: 'markdown', expandable: true });
+  add('file::a/f2', 'file', 'f2.md', { language: 'markdown', expandable: true });
+  add('file::b/f3', 'file', 'f3.md', { language: 'markdown', expandable: true });
+  link('folder::', 'folder::a', 0);
+  link('folder::', 'folder::b', 1);
+  link('folder::a', 'file::a/f1', 2);
+  link('folder::a', 'file::a/f2', 3);
+  link('folder::b', 'file::b/f3', 4);
+  return m;
 }
 
-/** Builds a deeper model: root → posts → 2020 → imgFolder → imgFile */
-function deepModel(): { model: GraphModel; rootId: string } {
-  const model = new GraphModel();
-  model.addNode({ id: 'folder::', kind: 'folder', label: 'root', meta: { depth: 0 } });
-  model.addNode({ id: 'folder::posts', kind: 'folder', label: 'posts', meta: { depth: 1 } });
-  model.addNode({ id: 'folder::posts/2020', kind: 'folder', label: '2020', meta: { depth: 2 } });
-  model.addNode({ id: 'folder::posts/2020/images', kind: 'folder', label: 'images', meta: { depth: 3 } });
-  model.addNode({ id: 'file::posts/2020/images/img.jpg', kind: 'file', label: 'img.jpg', meta: { language: 'markdown' } });
-  model.addEdge({ id: 'e1', source: 'folder::', target: 'folder::posts', kind: 'contains', weight: 1 });
-  model.addEdge({ id: 'e2', source: 'folder::posts', target: 'folder::posts/2020', kind: 'contains', weight: 1 });
-  model.addEdge({ id: 'e3', source: 'folder::posts/2020', target: 'folder::posts/2020/images', kind: 'contains', weight: 1 });
-  model.addEdge({ id: 'e4', source: 'folder::posts/2020/images', target: 'file::posts/2020/images/img.jpg', kind: 'contains', weight: 1 });
-  return { model, rootId: 'folder::' };
+/** root → folder::src (file::src/a) where file::src/a has two element children */
+function fileWithElementsModel() {
+  const m = new GraphModel();
+  const add = (id: string, kind: string, label: string, meta: object) =>
+    m.addNode({ id, kind: kind as never, label, meta: meta as never });
+  const link = (src: string, tgt: string, i: number) =>
+    m.addEdge({ id: `e${i}`, source: src, target: tgt, kind: 'contains', weight: 1 });
+
+  add('folder::', 'folder', 'root', { depth: 0 });
+  add('folder::src', 'folder', 'src', { depth: 1 });
+  add('file::src/a', 'file', 'a.md', { language: 'markdown', expandable: true });
+  add('element::src/a::0', 'element', 'a.md[0]', { position: 0 });
+  add('element::src/a::1', 'element', 'a.md[1]', { position: 1 });
+  link('folder::', 'folder::src', 0);
+  link('folder::src', 'file::src/a', 1);
+  link('file::src/a', 'element::src/a::0', 2);
+  link('file::src/a', 'element::src/a::1', 3);
+  return m;
+}
+
+/** File with a binary sibling */
+function modelWithBinary() {
+  const m = new GraphModel();
+  const add = (id: string, kind: string, label: string, meta: object) =>
+    m.addNode({ id, kind: kind as never, label, meta: meta as never });
+  const link = (src: string, tgt: string, i: number) =>
+    m.addEdge({ id: `e${i}`, source: src, target: tgt, kind: 'contains', weight: 1 });
+
+  add('folder::', 'folder', 'root', { depth: 0 });
+  add('file::img.png', 'file', 'img.png', { language: 'image', expandable: false });
+  add('file::readme.md', 'file', 'readme.md', { language: 'markdown', expandable: true });
+  add('element::readme.md::0', 'element', 'readme[0]', { position: 0 });
+  link('folder::', 'file::img.png', 0);
+  link('folder::', 'file::readme.md', 1);
+  link('file::readme.md', 'element::readme.md::0', 2);
+  return m;
 }
 
 
@@ -39,102 +70,101 @@ function deepModel(): { model: GraphModel; rootId: string } {
 
 describe('projectRoot', () => {
   it('returns the folder with no parent', () => {
-    const { model } = twoFolderModel();
-    expect(projectRoot(model)).toBe('folder::');
+    expect(projectRoot(twoFolderModel())).toBe('folder::');
   });
 });
 
 
-// ── maxDepthBelow ─────────────────────────────────────────────────────────────
+// ── displayChildren ───────────────────────────────────────────────────────────
 
-describe('maxDepthBelow', () => {
-  it('returns 0 for a leaf folder', () => {
-    const { model } = twoFolderModel();
-    expect(maxDepthBelow(model, 'folder::a')).toBe(0);
+describe('displayChildren', () => {
+  it('folder returns sub-folders and files', () => {
+    const m = twoFolderModel();
+    const ids = displayChildren('folder::', m).map((n) => n.id).sort();
+    expect(ids).toEqual(['folder::a', 'folder::b']);
   });
 
-  it('returns 1 for root with single-level children', () => {
-    const { model, rootId } = twoFolderModel();
-    expect(maxDepthBelow(model, rootId)).toBe(1);
+  it('file returns elements when no blocks exist', () => {
+    const m = fileWithElementsModel();
+    const ids = displayChildren('file::src/a', m).map((n) => n.id).sort();
+    expect(ids).toEqual(['element::src/a::0', 'element::src/a::1']);
   });
 
-  it('returns 3 for a four-level deep tree', () => {
-    const { model, rootId } = deepModel();
-    expect(maxDepthBelow(model, rootId)).toBe(3);
+  it('binary file returns no children', () => {
+    const m = modelWithBinary();
+    expect(displayChildren('file::img.png', m)).toHaveLength(0);
+  });
+
+  it('element returns no children (leaf)', () => {
+    const m = fileWithElementsModel();
+    expect(displayChildren('element::src/a::0', m)).toHaveLength(0);
   });
 });
 
 
 // ── graphElements — structural ────────────────────────────────────────────────
 
-describe('graphElements — structural', () => {
-  it('emits one folder compound per immediate child at depth 0', () => {
-    const { model, rootId } = twoFolderModel();
-    const elems = graphElements(model, rootId, 0);
-    const folders = elems.filter((e) => e.data.kind === 'folder' && !('source' in e.data));
-    expect(folders.map((f) => f.data.id).sort()).toEqual(['folder::a', 'folder::b']);
+describe('graphElements — uniform containment view', () => {
+  it('viewing root: emits two folder compounds with file dots inside', () => {
+    const m = twoFolderModel();
+    const elems = graphElements(m, 'folder::');
+
+    // Two folder compound nodes
+    const compounds = elems.filter((e) => !e.data.parent && e.data.kind === 'folder');
+    expect(compounds.map((c) => c.data.id).sort()).toEqual(['folder::a', 'folder::b']);
+
+    // Dots inside folder::a: file::a/f1 and file::a/f2
+    const inA = elems.filter((e) => e.data.parent === 'folder::a');
+    expect(inA.map((e) => e.data.id).sort()).toEqual(['file::a/f1', 'file::a/f2']);
+
+    // Dots inside folder::b: file::b/f3
+    const inB = elems.filter((e) => e.data.parent === 'folder::b');
+    expect(inB.map((e) => e.data.id)).toEqual(['file::b/f3']);
   });
 
-  it('file nodes are present at depth 0', () => {
-    const { model, rootId } = twoFolderModel();
-    const elems = graphElements(model, rootId, 0);
-    const files = elems.filter((e) => e.data.kind === 'file');
-    expect(files).toHaveLength(2);
+  it('viewing a folder: each file dot shown inside its folder compound', () => {
+    const m = twoFolderModel();
+    const elems = graphElements(m, 'folder::a');
+    // folder::a is the selected context; its direct children are files
+    // Files that have element children → compounds; without elements → dots
+    // (no elements in this model → dots)
+    const fileDots = elems.filter((e) => e.data.kind === 'file');
+    expect(fileDots.map((e) => e.data.id).sort()).toEqual(['file::a/f1', 'file::a/f2']);
   });
 
-  it('no cluster or subcluster nodes emitted when all files in separate clusters', () => {
-    const { model, rootId } = twoFolderModel();
-    const elems = graphElements(model, rootId, 0);
-    // No global clusters exist → no sub-cluster compounds
-    expect(elems.filter((e) => e.data.kind === 'subcluster')).toHaveLength(0);
+  it('viewing a file: emits element dots (no blocks)', () => {
+    const m = fileWithElementsModel();
+    const elems = graphElements(m, 'file::src/a');
+    const elementDots = elems.filter((e) => e.data.kind === 'element');
+    expect(elementDots.map((e) => e.data.id).sort()).toEqual([
+      'element::src/a::0', 'element::src/a::1',
+    ]);
   });
 
-  it('remaining-files compound is added for files directly in root', () => {
-    const model = new GraphModel();
-    model.addNode({ id: 'folder::', kind: 'folder', label: 'root', meta: { depth: 0 } });
-    model.addNode({ id: 'folder::a', kind: 'folder', label: 'a', meta: { depth: 1 } });
-    model.addNode({ id: 'file::config.toml', kind: 'file', label: 'config.toml', meta: { language: 'toml' } });
-    model.addEdge({ id: 'e1', source: 'folder::', target: 'folder::a', kind: 'contains', weight: 1 });
-    model.addEdge({ id: 'e2', source: 'folder::', target: 'file::config.toml', kind: 'contains', weight: 1 });
-
-    const elems = graphElements(model, 'folder::', 0);
-    const remaining = elems.find((e) => e.data.id === 'remaining::folder::');
-    expect(remaining).toBeDefined();
-  });
-});
-
-
-// ── graphElements — depth frontier ───────────────────────────────────────────
-
-describe('graphElements — depth frontier', () => {
-  it('at depth 1, leaf folders at depth 0 are still included', () => {
-    // root → about (leaf, has file) → root → posts → 2020 (has file)
-    // Empty frontier folders are filtered out, so all folders here must have files.
-    const model = new GraphModel();
-    model.addNode({ id: 'folder::', kind: 'folder', label: 'root', meta: { depth: 0 } });
-    model.addNode({ id: 'folder::about', kind: 'folder', label: 'about', meta: { depth: 1 } });
-    model.addNode({ id: 'folder::posts', kind: 'folder', label: 'posts', meta: { depth: 1 } });
-    model.addNode({ id: 'folder::posts/2020', kind: 'folder', label: '2020', meta: { depth: 2 } });
-    model.addNode({ id: 'file::about/index.md', kind: 'file', label: 'index.md', meta: { language: 'markdown' } });
-    model.addNode({ id: 'file::posts/2020/post.md', kind: 'file', label: 'post.md', meta: { language: 'markdown' } });
-    model.addEdge({ id: 'e1', source: 'folder::', target: 'folder::about', kind: 'contains', weight: 1 });
-    model.addEdge({ id: 'e2', source: 'folder::', target: 'folder::posts', kind: 'contains', weight: 1 });
-    model.addEdge({ id: 'e3', source: 'folder::posts', target: 'folder::posts/2020', kind: 'contains', weight: 1 });
-    model.addEdge({ id: 'e4', source: 'folder::about', target: 'file::about/index.md', kind: 'contains', weight: 1 });
-    model.addEdge({ id: 'e5', source: 'folder::posts/2020', target: 'file::posts/2020/post.md', kind: 'contains', weight: 1 });
-
-    const elems = graphElements(model, 'folder::', 1);
-    const folders = elems.filter((e) => e.data.kind === 'folder').map((e) => e.data.id);
-    // about stays (leaf with file), posts/2020 appears (frontier), posts is collapsed
-    expect(folders).toContain('folder::about');
-    expect(folders).toContain('folder::posts/2020');
-    expect(folders).not.toContain('folder::posts');
+  it('binary file shown as grey dot (no children inside compound)', () => {
+    const m = modelWithBinary();
+    const elems = graphElements(m, 'folder::');
+    const binary = elems.find((e) => e.data.id === 'file::img.png');
+    expect(binary).toBeDefined();
+    expect(binary!.data.color).toBe('#bdbdbd');
+    // No elements should have img.png as parent
+    expect(elems.filter((e) => e.data.parent === 'file::img.png')).toHaveLength(0);
   });
 
-  it('no edges emitted when no global HAC clusters exist', () => {
-    const { model, rootId } = twoFolderModel();
-    const elems = graphElements(model, rootId, 0);
-    const edges = elems.filter((e) => 'source' in e.data && e.data.kind === 'similar');
+  it('text file shown as compound when it has element children', () => {
+    const m = fileWithElementsModel();
+    const elems = graphElements(m, 'folder::src');
+    // file::src/a has elements → shown as compound with element dots inside
+    const fileCompound = elems.find((e) => e.data.id === 'file::src/a' && !e.data.parent);
+    expect(fileCompound).toBeDefined();
+    const inside = elems.filter((e) => e.data.parent === 'file::src/a');
+    expect(inside.length).toBeGreaterThan(0);
+    expect(inside.every((e) => e.data.kind === 'element')).toBe(true);
+  });
+
+  it('no edges emitted in a model with no similar relationships', () => {
+    const m = twoFolderModel();
+    const edges = graphElements(m, 'folder::').filter((e) => 'source' in e.data);
     expect(edges).toHaveLength(0);
   });
 });

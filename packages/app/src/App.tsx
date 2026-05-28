@@ -1,15 +1,15 @@
 /**
  * Root application shell. Orchestrates folder picking, graph processing,
- * and renders the CographCanvas with depth navigation and root selection.
+ * and renders the CographCanvas with uniform containment navigation.
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   GraphModel,
   walkDir,
-  embedChunks,
+  embedElements,
   buildClusters,
-  labelClusters,
+  labelBlocks,
   loadConfig,
   TransformersEmbedder,
   CoGraphConfig,
@@ -17,13 +17,12 @@ import {
 } from '@cograph/core';
 import {
   CographCanvas,
-  DepthNav,
+  BreadcrumbNav,
   ColorMap,
   FilterPanel,
-  BreadcrumbItem,
+  TokenPanel,
   Metric,
   Filters,
-  maxUsefulDepth,
   projectRoot,
 } from '@cograph/renderer';
 import { FolderPicker } from './FolderPicker.js';
@@ -43,8 +42,8 @@ function StatusOverlay({ phase, done, total, error }: {
 }) {
   const labels: Partial<Record<Phase, string>> = {
     scanning: 'Scanning files…',
-    embedding: 'Embedding chunks…',
-    clustering: 'Clustering…',
+    embedding: 'Embedding elements…',
+    clustering: 'Grouping blocks…',
     error: 'Something went wrong',
   };
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -65,7 +64,7 @@ function StatusOverlay({ phase, done, total, error }: {
               borderRadius: 3, transition: 'width 0.2s',
             }} />
           </div>
-          <p style={{ fontSize: 12, color: '#aaa' }}>{done} / {total} chunks</p>
+          <p style={{ fontSize: 12, color: '#aaa' }}>{done} / {total} elements</p>
         </>
       )}
       {error && (
@@ -84,20 +83,18 @@ function StatusOverlay({ phase, done, total, error }: {
 // ── Toolbar ───────────────────────────────────────────────────────────────────
 
 interface ToolbarProps {
-  depth: number;
-  maxDepth: number;
-  breadcrumb: BreadcrumbItem[];
+  model: GraphModel;
+  navStack: string[];
   metric: Metric;
   filters: Filters;
-  onDepth: (n: number) => void;
-  onBreadcrumbClick: (id: string) => void;
+  onNavigateTo: (id: string) => void;
   onMetric: (m: Metric) => void;
   onFilters: (f: Filters) => void;
   onReset: () => void;
 }
 
-function Toolbar({ depth, maxDepth, breadcrumb, metric, filters,
-  onDepth, onBreadcrumbClick, onMetric, onFilters, onReset }: ToolbarProps) {
+function Toolbar({ model, navStack, metric, filters,
+  onNavigateTo, onMetric, onFilters, onReset }: ToolbarProps) {
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10,
@@ -107,10 +104,7 @@ function Toolbar({ depth, maxDepth, breadcrumb, metric, filters,
     }}>
       <span style={{ fontWeight: 700, fontSize: 16, color: '#1565c0', marginRight: 4 }}>cograph</span>
       <div style={{ flex: 1, minWidth: 200 }}>
-        <DepthNav
-          depth={depth} maxDepth={maxDepth} breadcrumb={breadcrumb}
-          onChange={onDepth} onBreadcrumbClick={onBreadcrumbClick}
-        />
+        <BreadcrumbNav model={model} navStack={navStack} onNavigateTo={onNavigateTo} />
       </div>
       <ColorMap metric={metric} onChange={onMetric} />
       <FilterPanel filters={filters} onChange={onFilters} />
@@ -126,20 +120,6 @@ function Toolbar({ depth, maxDepth, breadcrumb, metric, filters,
 }
 
 
-// ── Breadcrumb helpers ────────────────────────────────────────────────────────
-
-/** Walks the parent chain from folderId back to the project root, building a breadcrumb. */
-function buildBreadcrumb(model: GraphModel, folderId: string): BreadcrumbItem[] {
-  const crumbs: BreadcrumbItem[] = [];
-  let current = model.getNode(folderId);
-  while (current) {
-    crumbs.unshift({ id: current.id, label: current.label });
-    current = model.parent(current.id);
-  }
-  return crumbs;
-}
-
-
 // ── App ───────────────────────────────────────────────────────────────────────
 
 export function App() {
@@ -148,14 +128,14 @@ export function App() {
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Navigation state
-  const [rootId, setRootId] = useState<string>('folder::');
-  const [depth, setDepth] = useState(0);
-  const [maxDepth, setMaxDepth] = useState(0);
-  const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([]);
+  // Navigation: a stack of container IDs — back = pop, forward = push
+  const [navStack, setNavStack] = useState<string[]>(['folder::']);
 
   const [metric, setMetric] = useState<Metric>('language');
   const [filters, setFilters] = useState<Filters>({ edges: new Set(['similar']) });
+
+  // Token panel: shown when an element node is clicked
+  const [clickedElement, setClickedElement] = useState<{ id: string; tokens: string[] } | null>(null);
 
   const handlePick = useCallback(async (files: FileList) => {
     setErrorMsg(null);
@@ -164,10 +144,16 @@ export function App() {
       const reader = new FileListReader(files);
       const cfg = await loadConfig(configStore);
 
+      // Infer root folder name from FileList (webkitRelativePath = "root/sub/file.md")
+      const rootName = Array.from(files)[0]?.webkitRelativePath?.split('/')[0] ?? 'project';
+
       const { model: scanned } = await walkDir('', reader, {
         chunkWindowSize: 256,
         chunkOverlap: 0.1,
       });
+
+      // Patch root folder label — scanner emits '' when root path is empty
+      scanned.updateNode('folder::', { label: rootName });
 
       const fileCount = scanned.nodesByKind('file').length;
       if (fileCount === 0) {
@@ -179,28 +165,24 @@ export function App() {
       }
 
       setPhase('embedding');
-      const total = scanned.nodesByKind('chunk').length;
+      const total = scanned.nodesByKind('element').length;
       setProgress({ done: 0, total });
 
-      await embedChunks(scanned, embedder, cfg.vectorCache, (done, t) =>
+      await embedElements(scanned, embedder, cfg.vectorCache, (done, t) =>
         setProgress({ done, total: t }),
       );
 
       setPhase('clustering');
       buildClusters(scanned);
-      labelClusters(scanned, cfg.labelOverrides);
+      labelBlocks(scanned, cfg.labelOverrides);
 
       cfg.vectorCache.updatedAt = new Date().toISOString();
       await configStore.save(cfg);
 
-      // Initialise navigation at the project root, depth 0
+      // Initialise navigation at the project root
       const root = projectRoot(scanned);
-      const md = maxUsefulDepth(scanned, root);
       setModel(scanned);
-      setRootId(root);
-      setDepth(0);
-      setMaxDepth(md);
-      setBreadcrumb(buildBreadcrumb(scanned, root));
+      setNavStack([root]);
       setPhase('done');
     } catch (err) {
       console.error('[cograph]', err);
@@ -209,38 +191,36 @@ export function App() {
     }
   }, []);
 
-  // Select a folder as the new navigation root (triggered by clicking a folder node)
-  const handleFolderSelect = useCallback((id: string) => {
-    if (!model) return;
-    const node = model.getNode(id);
-    if (!node || node.kind !== 'folder') return;
-    const md = maxUsefulDepth(model, id);
-    setRootId(id);
-    setDepth(0);
-    setMaxDepth(md);
-    setBreadcrumb(buildBreadcrumb(model, id));
-  }, [model]);
+  // Navigate into a child container
+  const handleNavigateInto = useCallback((id: string) => {
+    setNavStack((prev) => [...prev, id]);
+  }, []);
 
-  // Breadcrumb navigation — click an ancestor folder
-  const handleBreadcrumbClick = useCallback((id: string) => {
-    if (!model) return;
-    const md = maxUsefulDepth(model, id);
-    setRootId(id);
-    setDepth(0);
-    setMaxDepth(md);
-    setBreadcrumb(buildBreadcrumb(model, id));
-  }, [model]);
+  // Navigate to a specific ancestor (breadcrumb click — truncate stack)
+  const handleNavigateTo = useCallback((id: string) => {
+    setNavStack((prev) => {
+      const idx = prev.lastIndexOf(id);
+      return idx >= 0 ? prev.slice(0, idx + 1) : [...prev, id];
+    });
+  }, []);
 
-  // Dispatch node clicks: folders → root selection; others → ignored for now
-  const handleNodeClick = useCallback((id: string, kind: string) => {
-    if (kind === 'folder') handleFolderSelect(id);
-  }, [handleFolderSelect]);
+  // Back arrow — pop one level
+  const handleBack = useCallback(() => {
+    setNavStack((prev) => (prev.length > 1 ? prev.slice(0, -1) : prev));
+  }, []);
+
+  // Element click — open token panel
+  const handleElementClick = useCallback((id: string, tokens: string[]) => {
+    setClickedElement({ id, tokens });
+  }, []);
 
   const handleReset = () => { setModel(null); setPhase('idle'); setErrorMsg(null); };
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
   const isProcessing = phase === 'scanning' || phase === 'embedding' || phase === 'clustering';
+  const selectedId = navStack[navStack.length - 1] ?? 'folder::';
+  const canGoBack = navStack.length > 1;
 
   if (!model || phase === 'error') {
     return (
@@ -264,17 +244,38 @@ export function App() {
   }
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div style={{ width: '100%', height: '100%', position: 'relative', display: 'flex', flexDirection: 'column' }}>
       <Toolbar
-        depth={depth} maxDepth={maxDepth} breadcrumb={breadcrumb}
-        metric={metric} filters={filters}
-        onDepth={setDepth} onBreadcrumbClick={handleBreadcrumbClick}
-        onMetric={setMetric} onFilters={setFilters} onReset={handleReset}
+        model={model} navStack={navStack} metric={metric} filters={filters}
+        onNavigateTo={handleNavigateTo} onMetric={setMetric}
+        onFilters={setFilters} onReset={handleReset}
       />
-      <div style={{ paddingTop: 60, height: '100%' }}>
+      {/* Canvas fills remaining height; back arrow floats left of canvas */}
+      <div style={{ flex: 1, minHeight: 0, marginTop: 50, position: 'relative' }}>
+        {/* Back arrow */}
+        {canGoBack && (
+          <button
+            onClick={handleBack}
+            title="Back"
+            style={{
+              position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+              zIndex: 5, width: 32, height: 32, borderRadius: '50%',
+              border: '1px solid #ccc', background: 'rgba(255,255,255,0.9)',
+              cursor: 'pointer', fontSize: 18, display: 'flex',
+              alignItems: 'center', justifyContent: 'center', color: '#555',
+            }}
+          >‹</button>
+        )}
         <CographCanvas
-          model={model} rootId={rootId} depth={depth}
-          onNodeClick={handleNodeClick}
+          model={model} selectedId={selectedId}
+          metric={metric} filters={filters}
+          onNavigateInto={handleNavigateInto}
+          onElementClick={handleElementClick}
+        />
+        <TokenPanel
+          elementId={clickedElement?.id ?? null}
+          tokens={clickedElement?.tokens ?? []}
+          onClose={() => setClickedElement(null)}
         />
       </div>
     </div>

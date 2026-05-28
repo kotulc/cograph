@@ -2,7 +2,7 @@
 
 // ── Node kinds ────────────────────────────────────────────────────────────────
 
-export type NodeKind = 'folder' | 'file' | 'chunk' | 'cluster';
+export type NodeKind = 'folder' | 'file' | 'element' | 'block' | 'cluster';
 
 /** User-visible edge kinds rendered in the graph. */
 export type EdgeKind = 'contains' | 'similar' | 'reference';
@@ -21,26 +21,41 @@ export interface FolderMeta {
 
 export interface FileMeta {
   language: string;
-  representative?: number[]; // serializable form of Float32Array
+  expandable?: boolean;           // false for binary/unsupported files; default true
+  representative?: number[];      // mean embedding of all blocks; stored for global clustering
 }
 
-export interface ChunkMeta {
-  position: number; // ordinal index within the parent file
+/** Metadata for an element node (atomic content unit within a file). */
+export interface ElementMeta {
+  position: number;               // ordinal index within the parent file
+  tokens?: string[];              // representative raw text fragments for the token panel
 }
 
+/**
+ * Metadata for a block node (intra-file semantic group).
+ * Produced by Pass 1 local HAC clustering of element embeddings.
+ */
+export interface BlockMeta {
+  mergeScore: number;             // cosine similarity at which members were joined (higher = more similar)
+  level: number;                  // merge order (1 = first merge, n-1 = root)
+}
+
+/**
+ * Metadata for a global cluster node (cross-file semantic group).
+ * Produced by Pass 2 HAC on file representatives. Internal only — not rendered as nodes.
+ */
 export interface ClusterMeta {
-  scope: 'local' | 'global';
   mergeScore: number;
   level: number;
 }
 
-export type NodeMeta = FolderMeta | FileMeta | ChunkMeta | ClusterMeta;
+export type NodeMeta = FolderMeta | FileMeta | ElementMeta | BlockMeta | ClusterMeta;
 
 export interface GraphNode {
   id: string;
   kind: NodeKind;
   label: string;
-  vector?: number[]; // present on chunk nodes only
+  vector?: number[];              // present on element nodes only
   meta: NodeMeta;
 }
 
@@ -78,17 +93,15 @@ export interface IChunker {
 
 export interface VectorCache {
   updatedAt: string;
-  chunks: Record<string, number[]>;
+  elements: Record<string, number[]>;   // elementId → embedding vector
   representatives: Record<string, number[]>;
 }
 
 export interface CoGraphConfig {
   version: number;
-  activeLayout: 'structural' | 'semantic';
   metric: string;
-  maxDepth: number;
+  maxElements: number;            // max element nodes per file (default 50)
   labelOverrides: Record<string, string>;
-  membershipOverrides: Record<string, string>;
   dismissedSuggestions: string[];
   acceptedEdges: string[];
   vectorCache: VectorCache;

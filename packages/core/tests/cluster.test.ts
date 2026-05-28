@@ -1,22 +1,22 @@
 import { describe, it, expect } from 'vitest';
 import { GraphModel } from '../src/graph.js';
 import { GraphNode } from '../src/types.js';
-import { clusterFileChunks, clusterFiles, buildClusters, cosine } from '../src/cluster.js';
+import { groupFileElements, clusterFiles, buildClusters, cosine } from '../src/cluster.js';
 import { MockEmbedder } from './helpers/MockEmbedder.js';
-import { embedChunks } from '../src/embed.js';
+import { embedElements } from '../src/embed.js';
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
-function addFileWithChunks(model: GraphModel, fileId: string, contents: string[]): void {
+function addFileWithElements(model: GraphModel, fileId: string, contents: string[]): void {
   const file: GraphNode = { id: fileId, kind: 'file', label: fileId, meta: { language: 'text' } };
   model.addNode(file);
   contents.forEach((content, i) => {
-    const chunk: GraphNode & { content: string } = {
-      id: `${fileId}::chunk::${i}`, kind: 'chunk',
-      label: `chunk[${i}]`, meta: { position: i }, content,
+    const element: GraphNode & { content: string } = {
+      id: `${fileId}::element::${i}`, kind: 'element',
+      label: `element[${i}]`, meta: { position: i }, content,
     };
-    model.addNode(chunk as unknown as GraphNode);
-    model.addEdge({ id: `${fileId}::e${i}`, source: fileId, target: chunk.id, kind: 'contains', weight: 1 });
+    model.addNode(element as unknown as GraphNode);
+    model.addEdge({ id: `${fileId}::e${i}`, source: fileId, target: element.id, kind: 'contains', weight: 1 });
   });
 }
 
@@ -31,23 +31,22 @@ describe('cosine', () => {
   });
 });
 
-describe('clusterFileChunks (Pass 1)', () => {
-  it('adds local cluster nodes for a file with multiple chunks', async () => {
+describe('groupFileElements (Pass 1)', () => {
+  it('adds block nodes for a file with multiple elements', async () => {
     const model = new GraphModel();
-    addFileWithChunks(model, 'file::a', ['chunk text one two', 'chunk text three four', 'chunk text five six']);
-    await embedChunks(model, new MockEmbedder(), { updatedAt: '', chunks: {}, representatives: {} });
-    clusterFileChunks('file::a', model);
+    addFileWithElements(model, 'file::a', ['element text one two', 'element text three four', 'element text five six']);
+    await embedElements(model, new MockEmbedder(), { updatedAt: '', elements: {}, representatives: {} });
+    groupFileElements('file::a', model);
 
-    const clusters = model.nodesByKind('cluster');
-    expect(clusters.length).toBeGreaterThan(0);
-    expect(clusters.every((c) => (c.meta as { scope: string }).scope === 'local')).toBe(true);
+    const blocks = model.nodesByKind('block');
+    expect(blocks.length).toBeGreaterThan(0);
   });
 
   it('stores a representative on the file node after pass 1', async () => {
     const model = new GraphModel();
-    addFileWithChunks(model, 'file::b', ['alpha beta', 'gamma delta']);
-    await embedChunks(model, new MockEmbedder(), { updatedAt: '', chunks: {}, representatives: {} });
-    clusterFileChunks('file::b', model);
+    addFileWithElements(model, 'file::b', ['alpha beta', 'gamma delta']);
+    await embedElements(model, new MockEmbedder(), { updatedAt: '', elements: {}, representatives: {} });
+    groupFileElements('file::b', model);
 
     const file = model.getNode('file::b')!;
     const rep = (file.meta as { representative?: number[] }).representative;
@@ -55,15 +54,15 @@ describe('clusterFileChunks (Pass 1)', () => {
     expect(rep!.length).toBeGreaterThan(0);
   });
 
-  it('all merges edges point from a cluster parent to a child', async () => {
+  it('all merges edges point from a block parent to a child', async () => {
     const model = new GraphModel();
-    addFileWithChunks(model, 'file::c', ['a b c', 'd e f', 'g h i']);
-    await embedChunks(model, new MockEmbedder(), { updatedAt: '', chunks: {}, representatives: {} });
-    clusterFileChunks('file::c', model);
+    addFileWithElements(model, 'file::c', ['a b c', 'd e f', 'g h i']);
+    await embedElements(model, new MockEmbedder(), { updatedAt: '', elements: {}, representatives: {} });
+    groupFileElements('file::c', model);
 
     const mergesEdges = model.allEdges().filter((e) => e.kind === 'merges');
     for (const edge of mergesEdges) {
-      expect(model.getNode(edge.source)?.kind).toBe('cluster');
+      expect(model.getNode(edge.source)?.kind).toBe('block');
     }
   });
 });
@@ -71,47 +70,45 @@ describe('clusterFileChunks (Pass 1)', () => {
 describe('clusterFiles (Pass 2)', () => {
   it('adds global cluster nodes when multiple files are present', async () => {
     const model = new GraphModel();
-    addFileWithChunks(model, 'file::x', ['text about bikes wheels spokes']);
-    addFileWithChunks(model, 'file::y', ['content about trails enduro riding']);
-    addFileWithChunks(model, 'file::z', ['discussion of carbon fiber rims weight']);
-    const cache = { updatedAt: '', chunks: {}, representatives: {} };
-    await embedChunks(model, new MockEmbedder(), cache);
-    for (const f of model.nodesByKind('file')) clusterFileChunks(f.id, model);
+    addFileWithElements(model, 'file::x', ['text about bikes wheels spokes']);
+    addFileWithElements(model, 'file::y', ['content about trails enduro riding']);
+    addFileWithElements(model, 'file::z', ['discussion of carbon fiber rims weight']);
+    const cache = { updatedAt: '', elements: {}, representatives: {} };
+    await embedElements(model, new MockEmbedder(), cache);
+    for (const f of model.nodesByKind('file')) groupFileElements(f.id, model);
     clusterFiles(model);
 
-    const globals = model.nodesByKind('cluster').filter((c) => (c.meta as { scope: string }).scope === 'global');
+    const globals = model.nodesByKind('cluster');
     expect(globals.length).toBeGreaterThan(0);
   });
 });
 
 describe('buildClusters (full pipeline)', () => {
-  it('produces both local and global clusters', async () => {
+  it('produces both block and global cluster nodes', async () => {
     const model = new GraphModel();
     for (let i = 0; i < 4; i++) {
-      addFileWithChunks(model, `file::${i}`, [`content alpha ${i}`, `content beta ${i}`]);
+      addFileWithElements(model, `file::${i}`, [`content alpha ${i}`, `content beta ${i}`]);
     }
-    const cache = { updatedAt: '', chunks: {}, representatives: {} };
-    await embedChunks(model, new MockEmbedder(), cache);
+    const cache = { updatedAt: '', elements: {}, representatives: {} };
+    await embedElements(model, new MockEmbedder(), cache);
     buildClusters(model);
 
-    const local = model.nodesByKind('cluster').filter((c) => (c.meta as { scope: string }).scope === 'local');
-    const global = model.nodesByKind('cluster').filter((c) => (c.meta as { scope: string }).scope === 'global');
-    expect(local.length).toBeGreaterThan(0);
-    expect(global.length).toBeGreaterThan(0);
+    expect(model.nodesByKind('block').length).toBeGreaterThan(0);
+    expect(model.nodesByKind('cluster').length).toBeGreaterThan(0);
   });
 
-  it('no flat semantic edges exist — only merges edges from clusters', async () => {
+  it('merges edges all originate from block or cluster nodes', async () => {
     const model = new GraphModel();
     for (let i = 0; i < 3; i++) {
-      addFileWithChunks(model, `file::${i}`, [`sample text ${i}`]);
+      addFileWithElements(model, `file::${i}`, [`sample text ${i}`]);
     }
-    await embedChunks(model, new MockEmbedder(), { updatedAt: '', chunks: {}, representatives: {} });
+    await embedElements(model, new MockEmbedder(), { updatedAt: '', elements: {}, representatives: {} });
     buildClusters(model);
 
-    const semantic = model.allEdges().filter((e) => e.kind === 'merges');
-    const mergeSourcesAreAllClusters = semantic.every(
-      (e) => model.getNode(e.source)?.kind === 'cluster',
-    );
-    expect(mergeSourcesAreAllClusters).toBe(true);
+    const mergesEdges = model.allEdges().filter((e) => e.kind === 'merges');
+    for (const edge of mergesEdges) {
+      const srcKind = model.getNode(edge.source)?.kind;
+      expect(['block', 'cluster']).toContain(srcKind);
+    }
   });
 });

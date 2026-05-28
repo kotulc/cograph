@@ -13,17 +13,18 @@ describe('ConfigSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects an invalid activeLayout value', () => {
-    const bad = { ...CONFIG_DEFAULTS, activeLayout: 'diagonal' };
+  it('rejects a non-integer maxElements', () => {
+    const bad = { ...CONFIG_DEFAULTS, maxElements: 'lots' };
     expect(ConfigSchema.safeParse(bad).success).toBe(false);
   });
 });
 
 describe('mergeDefaults', () => {
   it('fills missing fields with defaults', () => {
-    const partial: Partial<CoGraphConfig> = { activeLayout: 'semantic' };
+    const partial: Partial<CoGraphConfig> = { metric: 'degree' };
     const merged = mergeDefaults(partial);
-    expect(merged.activeLayout).toBe('semantic');
+    expect(merged.metric).toBe('degree');
     expect(merged.version).toBe(CONFIG_DEFAULTS.version);
+    expect(merged.maxElements).toBe(CONFIG_DEFAULTS.maxElements);
   });
 });
